@@ -3,5 +3,6 @@ name = "ptr-array"
 version = "0.1.0"
 edition = "2021"
 license = "Apache License 2.0"
+description = "TypeId based bounded pointer array."
 
 [dependencies]
