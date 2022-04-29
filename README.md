@@ -1,1 +1,1 @@
-# ptr_array
+# TypeId based pointer array.
