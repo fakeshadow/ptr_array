@@ -25,5 +25,5 @@ jobs:
       - name: miri
         run: cargo miri test --no-fail-fast
         env:
-          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tag-raw-pointers
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-symbolic-alignment-check -Zmiri-tag-raw-pointers
           PROPTEST_CASES: 10
