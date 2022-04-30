@@ -95,63 +95,42 @@ impl<'a, const N: usize> PointerArray<'a, N> {
     ///
     /// On Err([Full]) the array without modification would be returned. See [Full::into_inner] for
     /// detail.
+    #[inline]
     pub fn insert_mut<'b, T: 'static>(
-        mut self,
+        self,
         value: &'b mut T,
     ) -> Result<PointerArray<'b, N>, Full<'a, N>>
     where
         'a: 'b,
     {
-        let (id, opt) = self.try_find_one::<T>();
-
-        match opt {
-            Some(ptr) => {
-                let _ = mem::replace(ptr, value.into());
-            }
-            None => {
-                if self.head == N {
-                    return Err(Full(self));
-                }
-                // SAFETY:
-                // head just checked.
-                unsafe { self.write(id, value.into()) }
-            }
-        }
-
-        Ok(self)
+        self.insert(TypeId::of::<T>(), value)
     }
 
     /// The &T version of [Self::insert_mut]. See it for more detail.
+    #[inline]
     pub fn insert_ref<'b, T: 'static>(
-        mut self,
+        self,
         value: &'b T,
     ) -> Result<PointerArray<'b, N>, Full<'a, N>>
     where
         'a: 'b,
     {
-        let (id, opt) = self.try_find_one::<T>();
-
-        match opt {
-            Some(ptr) => {
-                let _ = mem::replace(ptr, value.into());
-            }
-            None => {
-                if self.head == N {
-                    return Err(Full(self));
-                }
-                // SAFETY:
-                // head just checked.
-                unsafe { self.write(id, value.into()) }
-            }
-        }
-
-        Ok(self)
+        self.insert(TypeId::of::<T>(), value)
     }
 
     /// &T version of [Self::remove_mut]. See it for detail.
     pub fn remove_ref<T: 'static>(&mut self) -> Option<&'a T> {
         self.remove::<T, _, _>(|r| match r {
             RefVariant::Ref(_) => match mem::replace(r, RefVariant::None) {
+                // SAFETY:
+                // pointer is removed from Array. It can't cast/dereference the pointer again and
+                // guaranteed to be no double free or reference uniqueness violation.
+                //
+                // The T type cast is guaranteed by TypId match.
+                //
+                // The lifetime is determined by the value inserted with smallest lifetime and
+                // PointerArray itself is marked as referencing the original T so it's guaranteed
+                // to be no use after free.
                 RefVariant::Ref(t) => Some(unsafe { &*(t as *const T) }),
                 // SAFETY:
                 // The branch was just checked before.
@@ -165,6 +144,15 @@ impl<'a, const N: usize> PointerArray<'a, N> {
     pub fn remove_mut<T: 'static>(&mut self) -> Option<&'a mut T> {
         self.remove::<T, _, _>(|r| match r {
             RefVariant::Mut(_) => match mem::replace(r, RefVariant::None) {
+                // SAFETY:
+                // pointer is removed from Array. It can't cast/dereference the pointer again and
+                // guaranteed to be no double free or reference uniqueness violation.
+                //
+                // The T type cast is guaranteed by TypId match.
+                //
+                // The lifetime is determined by the value inserted with smallest lifetime and
+                // PointerArray itself is marked as referencing the original T so it's guaranteed
+                // to be no use after free.
                 RefVariant::Mut(t) => Some(unsafe { &mut *(t as *mut T) }),
                 // SAFETY:
                 // The branch was just checked before.
@@ -176,10 +164,20 @@ impl<'a, const N: usize> PointerArray<'a, N> {
 
     /// Get &T without removing it from the array.
     ///
-    /// &T can be get from either insert with [Self::insert_mut] or [Self::insert_ref].
+    /// &T can be obtained from either insert with [Self::insert_mut] or [Self::insert_ref].
     pub fn get<T: 'static>(&self) -> Option<&'a T> {
         let id = TypeId::of::<T>();
         self.try_find_init(&id).and_then(|r| match r {
+            // SAFETY:
+            //
+            // &T is borrowed with the same lifetime of PointerArray so it's guaranteed no
+            // other modification to the array is possible when &T is still alive.
+            //
+            // The T type cast is guaranteed by TypId match.
+            //
+            // The lifetime is determined by the value inserted with smallest lifetime and
+            // PointerArray itself is marked as referencing the original T so it's guaranteed
+            // to be no use after free.
             RefVariant::Ref(t) => Some(unsafe { &*(*t as *const T) }),
             RefVariant::Mut(t) => Some(unsafe { &*(*t as *mut T as *const T) }),
             RefVariant::None => None,
@@ -188,19 +186,48 @@ impl<'a, const N: usize> PointerArray<'a, N> {
 
     /// Get &mut T without removing it from the array.
     ///
-    /// &mut T can be get from insert with [Self::insert_mut].
+    /// &mut T can be obtained from insert with [Self::insert_mut].
     pub fn get_mut<T: 'static>(&mut self) -> Option<&'a mut T> {
         let id = TypeId::of::<T>();
         self.try_find_init_mut(&id).and_then(|r| match r {
+            // SAFETY:
+            //
+            // &mut T is borrowed with the same lifetime of PointerArray so it's guaranteed no
+            // other modification to the array is possible when &mut T is still alive.
+            //
+            // The T type cast is guaranteed by TypId match.
+            //
+            // The lifetime is determined by the value inserted with smallest lifetime and
+            // PointerArray itself is marked as referencing the original T so it's guaranteed
+            // to be no use after free.
             RefVariant::Mut(t) => Some(unsafe { &mut *(*t as *mut T) }),
             _ => None,
         })
     }
 
-    fn try_find_one<T: 'static>(&mut self) -> (TypeId, Option<&mut RefVariant>) {
-        let id = TypeId::of::<T>();
-        let opt = self.try_find_init_mut(&id);
-        (id, opt)
+    fn insert<'b>(
+        mut self,
+        id: TypeId,
+        value: impl Into<RefVariant> + 'b,
+    ) -> Result<PointerArray<'b, N>, Full<'a, N>>
+    where
+        'a: 'b,
+    {
+        match self.try_find_init_mut(&id) {
+            Some(ptr) => {
+                let _ = mem::replace(ptr, value.into());
+            }
+            None => {
+                if self.head == N {
+                    return Err(Full(self));
+                }
+                // SAFETY:
+                // head just checked.
+                unsafe { self.write(id, value.into()) }
+            }
+        }
+
+        Ok(self)
     }
 
     fn remove<T, F, R>(&mut self, func: F) -> Option<R>
@@ -350,7 +377,7 @@ mod test {
 
     #[test]
     fn get() {
-        let map = PointerArray::<2>::new();
+        let mut map = PointerArray::<2>::new();
 
         let mut s = String::from("hello,string!");
         let b = String::from("hello,box!").into_boxed_str();
