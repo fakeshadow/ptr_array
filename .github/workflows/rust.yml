@@ -1,0 +1,29 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  rust_nightly: nightly
+
+jobs:
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Rust ${{ env.rust_nightly }}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.rust_nightly }}
+          components: miri
+          override: true
+      - name: miri
+        run: cargo miri test --no-fail-fast
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tag-raw-pointers
+          PROPTEST_CASES: 10
